@@ -70,7 +70,7 @@ RECT screenRect;
 POINT velocity = { 1, 1 };
 constexpr SIZE size_pixel = { 10,10 };
 constexpr SIZE size_frame = { 49, 70 };
-constexpr SIZE size_paddle = { 7,1 };
+constexpr SIZE size_paddle = { 7* size_pixel.cx,1 };
 constexpr SIZE size_block = { 5,3 };
 constexpr SIZE num_block = { 10, 5 };
 constexpr POINT pos_blocks = { 0,8 };
@@ -269,28 +269,28 @@ public:
         return count;
     }
 
-    bool Collision(POINT& pos, POINT& velocity) {
+    bool Collision(POINT pos, POINT& velocity) {
         pos.x += velocity.x;
         pos.y += velocity.y;
-        auto x_block = pos.x / size_block.cx;
-        auto y_block = pos.y / size_block.cy;
+        auto x_block = pos.x / (size_block.cx * size_pixel.cx);
+        auto y_block = pos.y / (size_block.cy * size_pixel.cy);
         if (y_block < 0) return false;
         if (blocks_.size() <= y_block) return false;
         auto exist = blocks_[y_block] & (1U << (x_block));
         if (!exist) return false;
         auto hit_x = false;
         if (velocity.x < 0) {
-            hit_x = ((pos.x % size_block.cx) == size_block.cx - 2);
+            hit_x = ((pos.x / size_pixel.cx % size_block.cx) == size_block.cx - 2);
         }
         else {
-            hit_x = ((pos.x % size_block.cx) == 0);
+            hit_x = ((pos.x / size_pixel.cx % size_block.cx) == 0);
         }
         auto hit_y = false;
         if (velocity.y < 0) {
-            hit_y = ((pos.y % size_block.cy) == size_block.cy - 2);
+            hit_y = ((pos.y/size_pixel.cy % size_block.cy) == size_block.cy - 2);
         }
         else {
-            hit_y = ((pos.y % size_block.cy) == 0);
+            hit_y = ((pos.y / size_pixel.cy % size_block.cy) == 0);
         }
         if (hit_x) {
             velocity.x = -velocity.x;
@@ -382,7 +382,7 @@ class Paddle {
     int width_;
     int width_frame_;
     int x_;
-    int rate_ = 16;
+    int rate_ = 1;
 public:
     void Move(int delta) {
         x_ += delta;
@@ -403,7 +403,7 @@ public:
         width_frame_(width_frame),
         x_((width_frame_ - width_) * rate_ / 2) {}
 };
-Paddle paddle_{ size_paddle.cx, size_frame.cx };
+Paddle paddle_{ size_paddle.cx, size_frame.cx*size_pixel.cx };
 int y_paddle_ = 68;
 
 class MouseOperate {
@@ -680,13 +680,13 @@ static Coroutine GameMain(Window* window) {
     window_frame.InvalidateRect(NULL, TRUE);
     window_frame.Update();
     while(true) {
-        window_ball.MoveWindowBlox(
+        window_ball.MoveWindow(
             pos_ball.x, pos_ball.y,
-            1, 1, TRUE
+            size_pixel.cx, size_pixel.cy, TRUE
         );
-        window_paddle->MoveWindowBlox(
-            paddle_.X(), y_paddle_,
-            size_paddle.cx, size_paddle.cy,
+        window_paddle->MoveWindow(
+            paddle_.X(), y_paddle_ * size_pixel.cy,
+            size_paddle.cx, size_paddle.cy * size_pixel.cy,
             TRUE
         );
         window_cnt_ball.SetNumber(0);
@@ -701,9 +701,9 @@ static Coroutine GameMain(Window* window) {
         ApplyScore(window_score, score);
         for (int cnt_ball = 3; 0 < cnt_ball; cnt_ball--) {
             window_cnt_ball.SetNumber(cnt_ball);
-            pos_ball.x = 10;
-            pos_ball.y = 23;
-            velocity = { 1, 1 };
+            pos_ball.x = 10*size_pixel.cx;
+			pos_ball.y = 23*size_pixel.cy;
+            velocity = { size_pixel.cx, size_pixel.cy };
             do {
                 if(window_frame.ShouldClose()
                 || (GetAsyncKeyState(VK_RBUTTON) & 0x8000) != 0) {
@@ -712,7 +712,7 @@ static Coroutine GameMain(Window* window) {
                 paddle_.Move(mouse_operate->DeltaXPop());
                 // 画面端チェック
                 bool bound = false;
-                if (pos_ball.x + velocity.x < 0 || size_frame.cx <= pos_ball.x + velocity.x) {
+                if (pos_ball.x + velocity.x < 0 || size_frame.cx*size_pixel.cx <= pos_ball.x + velocity.x) {
                     velocity.x = -velocity.x;
                     bound = true;
                 }
@@ -720,40 +720,45 @@ static Coroutine GameMain(Window* window) {
                     velocity.y = -velocity.y;
                     bound = true;
                 }
-                pos_ball.x -= pos_blocks.x;
-                pos_ball.y -= pos_blocks.y;
+                pos_ball.x -= pos_blocks.x*size_pixel.cx;
+                pos_ball.y -= pos_blocks.y*size_pixel.cy;
                 if (window_blocks.Collision(pos_ball, velocity)) {
                     score++;
 					ApplyScore(window_score, score);
                     bound = true;
                 }
-                pos_ball.x += pos_blocks.x;
-                pos_ball.y += pos_blocks.y;
-
-                // 移動
-                window_ball.MoveWindowBlox(
-                    pos_ball.x, pos_ball.y,
-                    1, 1, TRUE
-                );
-                window_paddle->MoveWindowBlox(
-                    paddle_.X(), y_paddle_,
-                    size_paddle.cx, size_paddle.cy,
-                    TRUE
-                );
-                if (0 < velocity.y && pos_ball.y + velocity.y == y_paddle_) {
+                pos_ball.x += pos_blocks.x*size_pixel.cx;
+                pos_ball.y += pos_blocks.y*size_pixel.cy;
+                if (0 < velocity.y
+                    && y_paddle_ * size_pixel.cy<=pos_ball.y + velocity.y
+                    && pos_ball.y + velocity.y < y_paddle_ * size_pixel.cy + size_paddle.cy) {
                     // ボールがパドルに当たる
                     if (paddle_.X() <= pos_ball.x && pos_ball.x < paddle_.X() + size_paddle.cx) {
                         velocity.y = -velocity.y;
-                        pos_ball.y = y_paddle_ - 1;
-                        static_cast<float>(paddle_.X() - pos_ball.x)
+                        auto vx = velocity.x + pos_ball.x - paddle_.X() - size_paddle.cx / 2;
+						vx += (vx < 0) ? -4 : 4; // 左右にずらす
+						vx /= 4; // 速度を調整
+						velocity.x = vx;
                         bound = true;
                     }
                 }
                 if(bound) {
                     beep_control.Play();
                 }
+                pos_ball.x += velocity.x;
+                pos_ball.y += velocity.y;
+                // 移動
+                window_ball.MoveWindow(
+                    pos_ball.x, pos_ball.y,
+                    size_pixel.cx, size_pixel.cy, TRUE
+                );
+                window_paddle->MoveWindow(
+                    paddle_.X(), y_paddle_* size_pixel.cy,
+                    size_paddle.cx, size_paddle.cy* size_pixel.cy,
+                    TRUE
+                );
                 co_await std::suspend_always{};
-            } while (pos_ball.y < size_frame.cy);
+            } while (pos_ball.y < size_frame.cy*size_pixel.cy);
         }
     }
 }
