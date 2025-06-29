@@ -100,6 +100,9 @@ class Window {
         );
     }
 public:
+    void TopMost() const {
+        SetWindowPos(handle_, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE);
+    }
     void SetWindowProc(WNDPROC wndProc) {
         Initialized();
         SetWindowLongPtr(handle_, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(wndProc));
@@ -272,33 +275,41 @@ public:
     bool Collision(POINT pos, POINT& velocity) {
         pos.x += velocity.x;
         pos.y += velocity.y;
-        auto x_block = pos.x / (size_block.cx * size_pixel.cx);
-        auto y_block = pos.y / (size_block.cy * size_pixel.cy);
+		pos.x /= size_pixel.cx;
+		pos.y /= size_pixel.cy;
+        auto x_block = pos.x / size_block.cx;
+        auto y_block = pos.y / size_block.cy;
         if (y_block < 0) return false;
         if (blocks_.size() <= y_block) return false;
         auto exist = blocks_[y_block] & (1U << (x_block));
         if (!exist) return false;
         auto hit_x = false;
         if (velocity.x < 0) {
-            hit_x = ((pos.x / size_pixel.cx % size_block.cx) == size_block.cx - 2);
+            hit_x = ((pos.x % size_block.cx) == size_block.cx - 2);
         }
         else {
-            hit_x = ((pos.x / size_pixel.cx % size_block.cx) == 0);
+            hit_x = ((pos.x % size_block.cx) == 0);
         }
         auto hit_y = false;
         if (velocity.y < 0) {
-            hit_y = ((pos.y/size_pixel.cy % size_block.cy) == size_block.cy - 2);
+            hit_y = ((pos.y % size_block.cy) == size_block.cy - 2);
         }
         else {
-            hit_y = ((pos.y / size_pixel.cy % size_block.cy) == 0);
+            hit_y = ((pos.y % size_block.cy) == 0);
+        }
+        if (hit_x && hit_y) {
+            if (abs(velocity.x) < abs(velocity.y)) {
+                hit_x = false;
+            }
+            else {
+                hit_y = false;
+            }
         }
         if (hit_x) {
             velocity.x = -velocity.x;
-            pos.x += velocity.x + velocity.x;
         }
         if (hit_y) {
             velocity.y = -velocity.y;
-            pos.y += velocity.y + velocity.y;
         }
         if (hit_x || hit_y) {
             blocks_[y_block] &= ~(1U << (x_block));
@@ -307,7 +318,10 @@ public:
         }
         return false;
     }
-
+    void Reset() {
+        blocks_.fill((1U << num_block.cx) - 1U); // blocks, all visible
+        ApplyBlocks();
+    }
     WindowBlocks(
         Window* window_parent
     )
@@ -319,10 +333,8 @@ public:
             window_parent
         ) {
         CreateRectRgn(0, 0, 0, 0);
-        blocks_.fill((1U << num_block.cx) - 1U); // blocks, all visible
-        ApplyBlocks();
+        Reset();
     }
-
 };
 
 class WindowNumber : public Window {
@@ -609,7 +621,7 @@ public:
         coroutine_(new Coroutine(coroutine(this)), [](Coroutine* c) { delete c; })
     {
         Show(SW_HIDE);
-        SetTimer(TIMER_FRAME, 1030 / 60, NULL);
+        SetTimer(TIMER_FRAME, static_cast<UINT>(1000 / 59.94 + 0.5), NULL);
         SetWindowProc(WindowProc);
     }
 };
@@ -635,6 +647,7 @@ static Coroutine GameMain(Window* window) {
         size_frame,
         window
     };
+    window_frame.TopMost();
     window_frame.SetWindowProc(WindowProcFrame);
     {
         int screenWidth = GetSystemMetrics(SM_CXSCREEN);
@@ -699,6 +712,7 @@ static Coroutine GameMain(Window* window) {
 		}
         int score = 0;
         ApplyScore(window_score, score);
+        window_blocks.Reset();
         for (int cnt_ball = 3; 0 < cnt_ball; cnt_ball--) {
             window_cnt_ball.SetNumber(cnt_ball);
             pos_ball.x = 10*size_pixel.cx;
@@ -712,7 +726,7 @@ static Coroutine GameMain(Window* window) {
                 paddle_.Move(mouse_operate->DeltaXPop());
                 // 画面端チェック
                 bool bound = false;
-                if (pos_ball.x + velocity.x < 0 || size_frame.cx*size_pixel.cx <= pos_ball.x + velocity.x) {
+                if (pos_ball.x + velocity.x < 0 || size_frame.cx*size_pixel.cx <= pos_ball.x + velocity.x + size_pixel.cx) {
                     velocity.x = -velocity.x;
                     bound = true;
                 }
@@ -726,6 +740,9 @@ static Coroutine GameMain(Window* window) {
                     score++;
 					ApplyScore(window_score, score);
                     bound = true;
+                    if (window_blocks.GetRemain() == 0) {
+                        window_blocks.Reset();
+                    }
                 }
                 pos_ball.x += pos_blocks.x*size_pixel.cx;
                 pos_ball.y += pos_blocks.y*size_pixel.cy;
