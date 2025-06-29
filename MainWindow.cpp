@@ -1,6 +1,8 @@
+#define NOMINMAX
+#include <windows.h>
+
 #include <map>
 #include <tuple>
-#include <windows.h>
 #include <memory>
 #include <coroutine>
 #include <cassert>
@@ -10,8 +12,14 @@
 #include <vector>
 #include <mmsystem.h>
 #include <cmath>
+#include <limits>
 
 #pragma comment(lib, "winmm.lib")
+
+template <typename T>
+constexpr T max_of(const T&) {
+    return std::numeric_limits<T>::max();
+}
 
 class BeepControl {
     static constexpr int sampleRate = 44000;       // 44kHz
@@ -283,28 +291,31 @@ public:
         if (blocks_.size() <= y_block) return false;
         auto exist = blocks_[y_block] & (1U << (x_block));
         if (!exist) return false;
-        auto hit_x = false;
-        if (velocity.x < 0) {
-            hit_x = ((pos.x % size_block.cx) == size_block.cx - 2);
-        }
-        else {
-            hit_x = ((pos.x % size_block.cx) == 0);
-        }
-        auto hit_y = false;
+        auto dist_x = pos.x - x_block * size_block.cx * size_pixel.cx;
+        if(velocity.x < 0) {
+            // 右端に当たる
+            dist_x -= (size_block.cx - 1) * size_pixel.cx;
+		}
+        if(dist_x*velocity.x < 0) {
+            // 交差してない
+            dist_x = 0;
+            //dist_x = max_of(dist_x);
+		}
+		auto dist_y = pos.y - y_block * size_block.cy * size_pixel.cy;
         if (velocity.y < 0) {
-            hit_y = ((pos.y % size_block.cy) == size_block.cy - 2);
-        }
-        else {
-            hit_y = ((pos.y % size_block.cy) == 0);
-        }
-        if (hit_x && hit_y) {
-            if (abs(velocity.x) < abs(velocity.y)) {
-                hit_x = false;
-            }
-            else {
-                hit_y = false;
-            }
-        }
+            // 下端に当たる
+			dist_y -= (size_block.cy - 1) * size_pixel.cy;
+		}
+        if (dist_y*velocity.y < 0) {
+            // 交差してない
+            dist_y = 0;
+            //dist_y = max_of(dist_y);
+		}
+        dist_x = std::abs(dist_x * velocity.y);
+        dist_y = std::abs(dist_y * velocity.x);
+
+        auto hit_x = (dist_x <= dist_y);
+        auto hit_y = (dist_y <= dist_x);
         if (hit_x) {
             velocity.x = -velocity.x;
         }
@@ -726,7 +737,7 @@ static Coroutine GameMain(Window* window) {
                 paddle_.Move(mouse_operate->DeltaXPop());
                 // 画面端チェック
                 bool bound = false;
-                if (pos_ball.x + velocity.x < 0 || size_frame.cx*size_pixel.cx <= pos_ball.x + velocity.x + size_pixel.cx) {
+                if (pos_ball.x + velocity.x < 0 || size_frame.cx*size_pixel.cx <= pos_ball.x + size_pixel.cx + velocity.x) {
                     velocity.x = -velocity.x;
                     bound = true;
                 }
