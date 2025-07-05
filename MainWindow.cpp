@@ -39,7 +39,8 @@ public:
         : buffer_(samples) {
         for (int i = 0; i < samples; ++i) {
             double t = static_cast<double>(i) / sampleRate;
-            buffer_[i] = static_cast<BYTE>(127.5 * (sin(2 * 3.141592 * frequency * t)*0.1 + 1));
+			//t = sqrt(t); // piyo
+            buffer_[i] = static_cast<BYTE>(127.5 * (sin(2 * 3.141592 * frequency * t) * 0.1 + 1));
         }
         WAVEFORMATEX wfx = {};
         wfx.wFormatTag = WAVE_FORMAT_PCM;
@@ -280,50 +281,43 @@ public:
         return count;
     }
 
-    bool Collision(POINT pos, POINT& velocity) {
-        pos.x += velocity.x;
-        pos.y += velocity.y;
-		pos.x /= size_pixel.cx;
-		pos.y /= size_pixel.cy;
-        auto x_block = pos.x / size_block.cx;
-        auto y_block = pos.y / size_block.cy;
-        if (y_block < 0) return false;
-        if (blocks_.size() <= y_block) return false;
-        auto exist = blocks_[y_block] & (1U << (x_block));
-        if (!exist) return false;
-        auto dist_x = pos.x - x_block * size_block.cx * size_pixel.cx;
-        if(velocity.x < 0) {
-            // ‰E’[‚É“–‚½‚é
-            dist_x -= (size_block.cx - 1) * size_pixel.cx;
-		}
-        if(dist_x*velocity.x < 0) {
-            // Œð·‚µ‚Ä‚È‚¢
-            dist_x = 0;
-            //dist_x = max_of(dist_x);
-		}
-		auto dist_y = pos.y - y_block * size_block.cy * size_pixel.cy;
-        if (velocity.y < 0) {
-            // ‰º’[‚É“–‚½‚é
-			dist_y -= (size_block.cy - 1) * size_pixel.cy;
-		}
-        if (dist_y*velocity.y < 0) {
-            // Œð·‚µ‚Ä‚È‚¢
-            dist_y = 0;
-            //dist_y = max_of(dist_y);
-		}
-        dist_x = std::abs(dist_x * velocity.y);
-        dist_y = std::abs(dist_y * velocity.x);
-
-        auto hit_x = (dist_x <= dist_y);
-        auto hit_y = (dist_y <= dist_x);
-        if (hit_x) {
-            velocity.x = -velocity.x;
+    POINT BlockFromPos(POINT pos) const {
+        pos.x /= size_pixel.cx;
+        pos.y /= size_pixel.cy;
+        if (velocity.x < 0) {
+            pos.x++;
         }
+        if (velocity.y < 0) {
+            pos.y++;
+        }
+        pos.x -= pos_blocks.x;
+        pos.y -= pos_blocks.y;
+        pos.x /= size_block.cx;
+        pos.y /= size_block.cy;
+        return pos;
+	}
+    bool Collision(POINT pos, POINT& velocity) {
+        auto pos_next = POINT{
+            pos.x + velocity.x,
+            pos.y + velocity.y
+        };
+		auto block_next = BlockFromPos(pos_next);
+        if (block_next.y < 0) return false;
+        if (blocks_.size() <= block_next.y) return false;
+        if (!(blocks_[block_next.y] & (1U << block_next.x))) {
+            return false;
+        }
+        auto block = BlockFromPos(pos);
+        auto hit_x = (block.x != block_next.x);
+		auto hit_y = (block.y != block_next.y);
+        if(hit_x) {
+			velocity.x = -velocity.x;
+		}
         if (hit_y) {
-            velocity.y = -velocity.y;
+			velocity.y = -velocity.y;
         }
         if (hit_x || hit_y) {
-            blocks_[y_block] &= ~(1U << (x_block));
+            blocks_[block_next.y] &= ~(1U << (block_next.x));
             ApplyBlocks();
             return true;
         }
@@ -457,7 +451,6 @@ public:
         RegisterRawInputDevices(&rid, 1, sizeof(rid));
     }
 };
-
 
 struct Coroutine {
     struct promise_type {
@@ -719,6 +712,12 @@ static Coroutine GameMain(Window* window) {
             || (GetAsyncKeyState(VK_RBUTTON) & 0x8000) != 0) {
                 co_return;
             }
+            paddle_.Move(mouse_operate->DeltaXPop());
+            window_paddle->MoveWindow(
+                paddle_.X(), y_paddle_ * size_pixel.cy,
+                size_paddle.cx, size_paddle.cy * size_pixel.cy,
+                TRUE
+            );
             co_await std::suspend_always{};
 		}
         int score = 0;
@@ -745,8 +744,6 @@ static Coroutine GameMain(Window* window) {
                     velocity.y = -velocity.y;
                     bound = true;
                 }
-                pos_ball.x -= pos_blocks.x*size_pixel.cx;
-                pos_ball.y -= pos_blocks.y*size_pixel.cy;
                 if (window_blocks.Collision(pos_ball, velocity)) {
                     score++;
 					ApplyScore(window_score, score);
@@ -755,8 +752,6 @@ static Coroutine GameMain(Window* window) {
                         window_blocks.Reset();
                     }
                 }
-                pos_ball.x += pos_blocks.x*size_pixel.cx;
-                pos_ball.y += pos_blocks.y*size_pixel.cy;
                 if (0 < velocity.y
                     && y_paddle_ * size_pixel.cy<=pos_ball.y + velocity.y
                     && pos_ball.y + velocity.y < y_paddle_ * size_pixel.cy + size_paddle.cy) {
