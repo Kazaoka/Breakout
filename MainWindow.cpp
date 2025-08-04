@@ -60,8 +60,6 @@ public:
     }
 };
 
-class Window; // Forward declaration
-static std::map<HWND, std::tuple<LPCWSTR,Window*>> g_map_debug_;
 
 class HInstance {
     HINSTANCE hInstance_;
@@ -73,17 +71,70 @@ public:
 
 std::unique_ptr<HInstance> g_hInstance;
 
-#define TIMER_FRAME 1
-
-RECT screenRect;
-POINT velocity = { 1, 1 };
+constexpr UINT_PTR TIMER_FRAME = 1;
 constexpr SIZE size_pixel = { 10,10 };
 constexpr SIZE size_frame = { 49, 70 };
 constexpr SIZE size_paddle = { 7* size_pixel.cx,1 };
 constexpr SIZE size_block = { 5,3 };
 constexpr SIZE num_block = { 10, 5 };
 constexpr POINT pos_blocks = { 0,8 };
-POINT pos_ball = { 0,0 };
+
+class Ball {
+    static constexpr SIZE size_{ size_pixel };
+    POINT pos_ = { 0,0 };
+    POINT velocity_ = { 1, 1 };
+    int width_frame_;
+public:
+    bool BoundFrame() {
+        bool bound = false;
+        if (pos_.x + velocity_.x < 0 || size_frame.cx * size_pixel.cx <= pos_.x + size_pixel.cx + velocity_.x) {
+            velocity_.x = -velocity_.x;
+            bound = true;
+        }
+        if (pos_.y + velocity_.y < 0/* || size_frame.cy <= pos_ball.y + velocity.y*/) {
+            velocity_.y = -velocity_.y;
+            bound = true;
+        }
+        return bound;
+    }
+    void Move() {
+        pos_.x += velocity_.x;
+        pos_.y += velocity_.y;
+    }
+    const POINT& Pos() const { return pos_; }
+    const POINT& Velocity() const { return velocity_; }
+    void VelocotyX(int vx) { velocity_.x = vx; }
+    void VelocityXReverse() { velocity_.x = -velocity_.x; }
+    void VelocityYReverse() { velocity_.y = -velocity_.y; }
+    Ball(const Ball&) = delete;
+    Ball(POINT pos, POINT velocity, int width_frame) : pos_{ pos }, velocity_{ velocity }, width_frame_{width_frame} {}
+};
+class Paddle {
+    int width_;
+    int width_frame_;
+    int x_;
+    int rate_ = 1;
+public:
+    void Move(int delta) {
+        x_ += delta;
+        if (x_ < 0) x_ = 0;
+        int right = (width_frame_ - width_) * rate_;
+        if (right < x_) {
+            x_ = right;
+        }
+    }
+    int X() const {
+        return x_ / rate_;
+    }
+    Paddle(const Paddle&) = delete;
+    Paddle(
+        int width,
+        int width_frame
+    ) : width_{ width },
+        width_frame_{ width_frame },
+        x_{ (width_frame_ - width_) * rate_ / 2 } {
+    }
+};
 
 class Window {
     HWND handle_;
@@ -101,7 +152,6 @@ class Window {
         return DefWindowProc(hwnd, msg, wParam, lParam);
     }
     void Initialized() {
-        //g_map_debug_.emplace(handle_, std::make_tuple(className_, this));
         SetWindowLongPtr(
             handle_,
             GWLP_USERDATA,
@@ -210,11 +260,6 @@ public:
         DestroyWindow(handle_);
     }
     static Window* FromHwnd(HWND hwnd) {
-        //auto it = g_map_debug_.find(hwnd);
-        //if (it == g_map_debug_.end()) {
-        //    return nullptr;
-        //}
-        //return std::get<1>(it->second);
         return reinterpret_cast<Window*>(GetWindowLongPtr(hwnd, GWLP_USERDATA));
     }
     static HWND Handle(Window* window) {
@@ -281,9 +326,10 @@ public:
         return count;
     }
 
-    POINT BlockFromPos(POINT pos) const {
+    POINT BlockFromPos(POINT pos, POINT velocity) const {
         pos.x /= size_pixel.cx;
         pos.y /= size_pixel.cy;
+		// ブロック間のスキマを考慮
         if (velocity.x < 0) {
             pos.x++;
         }
@@ -296,25 +342,24 @@ public:
         pos.y /= size_block.cy;
         return pos;
 	}
-    bool Collision(POINT pos, POINT& velocity) {
+    bool Collision(Ball* ball) {
         auto pos_next = POINT{
-            pos.x + velocity.x,
-            pos.y + velocity.y
+            ball->Pos().x + ball->Velocity().x,
+            ball->Pos().y + ball->Velocity().y
         };
-		auto block_next = BlockFromPos(pos_next);
-        if (block_next.y < 0) return false;
-        if (blocks_.size() <= block_next.y) return false;
+		auto block_next = BlockFromPos(pos_next, ball->Velocity());
+        if (block_next.y < 0 || blocks_.size() <= block_next.y) return false;
         if (!(blocks_[block_next.y] & (1U << block_next.x))) {
             return false;
         }
-        auto block = BlockFromPos(pos);
+        auto block = BlockFromPos(ball->Pos(), ball->Velocity());
         auto hit_x = (block.x != block_next.x);
 		auto hit_y = (block.y != block_next.y);
         if(hit_x) {
-			velocity.x = -velocity.x;
+            ball->VelocityXReverse();
 		}
         if (hit_y) {
-			velocity.y = -velocity.y;
+            ball->VelocityYReverse();
         }
         if (hit_x || hit_y) {
             blocks_[block_next.y] &= ~(1U << (block_next.x));
@@ -395,33 +440,6 @@ public:
         ApplyNumber();
     }
 };
-class Paddle {
-    int width_;
-    int width_frame_;
-    int x_;
-    int rate_ = 1;
-public:
-    void Move(int delta) {
-        x_ += delta;
-        if (x_ < 0) x_ = 0;
-        int right = (width_frame_ - width_) * rate_;
-        if (right < x_) {
-            x_ = right;
-        }
-    }
-    int X() const {
-        return x_ / rate_;
-    }
-    Paddle(const Paddle&) = delete;
-    Paddle(
-        int width,
-        int width_frame
-    ):  width_(width),
-        width_frame_(width_frame),
-        x_((width_frame_ - width_) * rate_ / 2) {}
-};
-Paddle paddle_{ size_paddle.cx, size_frame.cx*size_pixel.cx };
-int y_paddle_ = 68;
 
 class MouseOperate {
     int delta_x_ = 0;
@@ -538,14 +556,14 @@ LRESULT CALLBACK WindowProcFrame(
 }
 
 class WindowMouseOperate : public Window {
-    std::unique_ptr<MouseOperate> mouse_operate_;
+    MouseOperate mouse_operate_;
     static LRESULT WndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
         auto window = Window::FromHwnd(hwnd);
         auto window_mouse_operate =
             reinterpret_cast<WindowMouseOperate*>(
                 window
                 );
-        auto mouse_operate = window_mouse_operate ? window_mouse_operate->mouse_operate_.get() : nullptr;
+        auto mouse_operate = window_mouse_operate ? &window_mouse_operate->mouse_operate_ : nullptr;
         switch (uMsg) {
         case WM_INPUT:
             if (mouse_operate) mouse_operate->WmInput((HRAWINPUT)lParam);
@@ -557,8 +575,8 @@ class WindowMouseOperate : public Window {
         return DefWindowProc(hwnd, uMsg, wParam, lParam);
     };
 public:
-    MouseOperate* GetMouseOperate() const {
-        return mouse_operate_.get();
+    MouseOperate* GetMouseOperate() {
+        return &mouse_operate_;
     }
     WindowMouseOperate() :
         Window(
@@ -568,7 +586,7 @@ public:
             SIZE{ 0,0 },
             NULL
         ),
-        mouse_operate_(new MouseOperate(Handle())){
+        mouse_operate_(Handle()){
 		SetWindowProc(WndProc);
     }
 };
@@ -680,28 +698,19 @@ static Coroutine GameMain(Window* window) {
         num_block.cy * size_block.cy,
         TRUE
 	);
-    Window window_ball{
-        L"Ball",
-        WHITE_BRUSH,
-        WS_CHILD,
-        SIZE{ 1,1 },
-        &window_frame
-    };
-    auto window_paddle = new Window(
+    Window window_paddle {
         L"Paddle",
         WHITE_BRUSH,
         WS_CHILD,
         size_paddle,
         &window_frame
-    );
+    };
     window_frame.InvalidateRect(NULL, TRUE);
     window_frame.Update();
+    Paddle paddle_{ size_paddle.cx, size_frame.cx * size_pixel.cx };
+    constexpr int y_paddle_ = 68;
     while(true) {
-        window_ball.MoveWindow(
-            pos_ball.x, pos_ball.y,
-            size_pixel.cx, size_pixel.cy, TRUE
-        );
-        window_paddle->MoveWindow(
+        window_paddle.MoveWindow(
             paddle_.X(), y_paddle_ * size_pixel.cy,
             size_paddle.cx, size_paddle.cy * size_pixel.cy,
             TRUE
@@ -713,7 +722,7 @@ static Coroutine GameMain(Window* window) {
                 co_return;
             }
             paddle_.Move(mouse_operate->DeltaXPop());
-            window_paddle->MoveWindow(
+            window_paddle.MoveWindow(
                 paddle_.X(), y_paddle_ * size_pixel.cy,
                 size_paddle.cx, size_paddle.cy * size_pixel.cy,
                 TRUE
@@ -724,10 +733,15 @@ static Coroutine GameMain(Window* window) {
         ApplyScore(window_score, score);
         window_blocks.Reset();
         for (int cnt_ball = 3; 0 < cnt_ball; cnt_ball--) {
+            Ball ball{ POINT{10 * size_pixel.cx, 23 * size_pixel.cy}, POINT {size_pixel.cx, size_pixel.cy}, size_frame.cx };
+            Window window_ball{
+                L"Ball",
+                WHITE_BRUSH,
+                WS_CHILD,
+                SIZE{ 1,1 },
+                &window_frame
+            };
             window_cnt_ball.SetNumber(cnt_ball);
-            pos_ball.x = 10*size_pixel.cx;
-			pos_ball.y = 23*size_pixel.cy;
-            velocity = { size_pixel.cx, size_pixel.cy };
             do {
                 if(window_frame.ShouldClose()
                 || (GetAsyncKeyState(VK_RBUTTON) & 0x8000) != 0) {
@@ -735,16 +749,8 @@ static Coroutine GameMain(Window* window) {
                 }
                 paddle_.Move(mouse_operate->DeltaXPop());
                 // 画面端チェック
-                bool bound = false;
-                if (pos_ball.x + velocity.x < 0 || size_frame.cx*size_pixel.cx <= pos_ball.x + size_pixel.cx + velocity.x) {
-                    velocity.x = -velocity.x;
-                    bound = true;
-                }
-                if (pos_ball.y + velocity.y < 0/* || size_frame.cy <= pos_ball.y + velocity.y*/) {
-                    velocity.y = -velocity.y;
-                    bound = true;
-                }
-                if (window_blocks.Collision(pos_ball, velocity)) {
+                bool bound = ball.BoundFrame();
+                if (window_blocks.Collision(&ball)) {
                     score++;
 					ApplyScore(window_score, score);
                     bound = true;
@@ -752,47 +758,45 @@ static Coroutine GameMain(Window* window) {
                         window_blocks.Reset();
                     }
                 }
-                if (0 < velocity.y
-                    && y_paddle_ * size_pixel.cy<=pos_ball.y + velocity.y
-                    && pos_ball.y + velocity.y < y_paddle_ * size_pixel.cy + size_paddle.cy) {
+                if (0 < ball.Velocity().y
+                    && y_paddle_ * size_pixel.cy<=ball.Pos().y + ball.Velocity().y
+                    && ball.Pos().y + ball.Velocity().y < y_paddle_ * size_pixel.cy + size_paddle.cy) {
                     // ボールがパドルに当たる
-                    if (paddle_.X() <= pos_ball.x && pos_ball.x < paddle_.X() + size_paddle.cx) {
-                        velocity.y = -velocity.y;
-                        auto vx = velocity.x + pos_ball.x - paddle_.X() - size_paddle.cx / 2;
+                    if (paddle_.X() <= ball.Pos().x && ball.Pos().x < paddle_.X() + size_paddle.cx) {
+                        ball.VelocityYReverse();
+                        auto vx = ball.Velocity().x + ball.Pos().x - paddle_.X() - size_paddle.cx / 2;
 						vx += (vx < 0) ? -4 : 4; // 左右にずらす
 						vx /= 4; // 速度を調整
-						velocity.x = vx;
+						ball.VelocotyX(vx);
                         bound = true;
                     }
                 }
                 if(bound) {
                     beep_control.Play();
                 }
-                pos_ball.x += velocity.x;
-                pos_ball.y += velocity.y;
+                ball.Move();
                 // 移動
                 window_ball.MoveWindow(
-                    pos_ball.x, pos_ball.y,
+                    ball.Pos().x, ball.Pos().y,
                     size_pixel.cx, size_pixel.cy, TRUE
                 );
-                window_paddle->MoveWindow(
+                window_paddle.MoveWindow(
                     paddle_.X(), y_paddle_* size_pixel.cy,
                     size_paddle.cx, size_paddle.cy* size_pixel.cy,
                     TRUE
                 );
                 co_await std::suspend_always{};
-            } while (pos_ball.y < size_frame.cy*size_pixel.cy);
+            } while (ball.Pos().y < size_frame.cy * size_pixel.cy);
         }
     }
 }
 
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow) {
     g_hInstance.reset(new HInstance(hInstance));
-    auto window_main =
-        new WindowWithCoroutine<GameMain>(
+    WindowWithCoroutine<GameMain> window_main{
             L"Breakout",
             nullptr
-        );
+    };
     Window::MessageLoop();
     return 0;
 }
